@@ -1,0 +1,11 @@
+backend/dist/
+backend/**/__pycache__/
+infrastructure/terraform/.terraform/
+infrastructure/terraform/.terraform.lock.hcl
+infrastructure/terraform/*.tfstate
+infrastructure/terraform/*.tfstate.backup
+infrastructure/terraform/*.tfvars
+.DS_Store
+frontend/.env
+frontend/node_modules/
+frontend/dist/

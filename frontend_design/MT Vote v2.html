@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MT Vote — Real-time Music Show Voting</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0a0f1c; font-family: "Pretendard", -apple-system, system-ui, sans-serif; color: #F1F5F9; }
+  #root { min-height: 100vh; }
+  /* Phone shell tweaks so vote screen sits inside iOS/Android frames */
+  .phone-vote-host { height: 100%; overflow-y: auto; overflow-x: hidden; background: var(--bg); }
+  .phone-vote-host::-webkit-scrollbar { display: none; }
+  .phone-vote-host { scrollbar-width: none; }
+  /* Section-label style */
+  .dc-system-note {
+    color: rgba(241,245,249,0.85);
+    font-size: 13px;
+    line-height: 1.55;
+    background: rgba(30,41,59,0.7);
+    border: 1px solid rgba(51,65,85,0.7);
+    border-radius: 12px;
+    padding: 14px 16px;
+    width: 720px;
+    backdrop-filter: blur(8px);
+  }
+  .dc-system-note h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #F1F5F9;
+  }
+  .dc-system-note .kicker {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #38BDF8;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .dc-system-note ul { margin: 4px 0 0 16px; padding: 0; color: #94A3B8; }
+  .dc-system-note ul li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="android-frame.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="store.jsx"></script>
+<script type="text/babel" src="vote.jsx"></script>
+<script type="text/babel" src="admin.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "candidateCount": 5,
+  "voteState": "ready",
+  "connection": "live",
+  "showCountdown": true
+}/*EDITMODE-END*/;
+
+function App() {
+  const [tw, setTw] = useTweaks(TWEAK_DEFAULTS);
+  const s = useStore();
+
+  // sync tweaks → store
+  React.useEffect(() => {
+    const patch = {};
+    if (s.candidateCount !== tw.candidateCount) patch.candidateCount = tw.candidateCount;
+    if (s.connection !== tw.connection) patch.connection = tw.connection;
+    if (s.voteState !== tw.voteState) {
+      patch.voteState = tw.voteState;
+      if (tw.voteState === 'done') patch.votedFor = patch.votedFor ?? Math.floor(Math.random() * tw.candidateCount);
+      if (tw.voteState !== 'done') patch.votedFor = null;
+    }
+    if (Object.keys(patch).length) MTStore.set(patch);
+  }, [tw.candidateCount, tw.voteState, tw.connection]);
+
+  // simulate occasional vote burst
+  const burst = () => {
+    const v = { ...MTStore.get().voted };
+    const d = { ...MTStore.get().deltas };
+    const n = MTStore.get().candidateCount;
+    const target = Math.floor(Math.random() * n);
+    const amount = 30 + Math.floor(Math.random() * 50);
+    v[target] = (v[target] || 0) + amount;
+    d[target] = (d[target] || 0) + amount;
+    MTStore.set({ voted: v, deltas: d });
+  };
+
+  const resetTally = () => {
+    const empty = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 0]));
+    MTStore.set({ voted: empty, deltas: { ...empty }, voteState: 'ready', votedFor: null, deadline: Date.now() + 90_000 });
+  };
+
+  return (
+    <>
+      <div className="canvas-bg" />
+      <DesignCanvas>
+        <DCSection id="overview" title="MT Vote" subtitle="실시간 음악 프로그램 투표 — Mobile /vote + Desktop /admin">
+          <div className="dc-system-note" data-dc-static>
+            <span className="kicker">System</span>
+            <h3>스테이지-친화 다크 베이스 + 단일 액센트(sky-400)</h3>
+            <ul>
+              <li><b>색</b>: slate-900 surface, slate-100 type, sky-400 accent. 차트는 8색 카테고리 팔레트 (WCAG AA).</li>
+              <li><b>타입</b>: Pretendard / 22·18·16·14, mono-num은 tabular nums로 자릿수 흔들림 방지.</li>
+              <li><b>모션</b>: 모든 트랜지션 150–300ms — 1Hz 업데이트 주기와 충돌 회피.</li>
+              <li><b>Reset-Safe</b>: <code>round_id</code> 단위로 localStorage 잠금 → 라운드 전환 시 자동 해제.</li>
+            </ul>
+          </div>
+        </DCSection>
+
+        <DCSection id="vote" title="모바일 — /vote" subtitle="응원봉을 든 한 손 사용 가정. 터치 타겟 ≥ 56pt.">
+          <DCArtboard id="ios-ready" label="iOS · Ready" width={402} height={874}>
+            <IOSDevice width={402} height={874} dark>
+              <div className="phone-vote-host">
+                <VotePage showCountdown={tw.showCountdown} />
+              </div>
+            </IOSDevice>
+          </DCArtboard>
+
+          <DCArtboard id="android-live" label="Galaxy · Live (synced)" width={412} height={892}>
+            <AndroidDevice width={412} height={892} dark>
+              <div className="phone-vote-host">
+                <VotePage showCountdown={tw.showCountdown} />
+              </div>
+            </AndroidDevice>
+          </DCArtboard>
+
+          <DCArtboard id="state-loading" label="State · Loading" width={360} height={640}>
+            <div className="phone-vote-host" style={{ height: '100%' }}>
+              <StaticVote state="loading" candidateCount={tw.candidateCount} showCountdown={tw.showCountdown} />
+            </div>
+          </DCArtboard>
+
+          <DCArtboard id="state-submitting" label="State · Submitting" width={360} height={640}>
+            <div className="phone-vote-host" style={{ height: '100%' }}>
+              <StaticVote state="submitting" pendingIndex={1} candidateCount={tw.candidateCount} showCountdown={tw.showCountdown} />
+            </div>
+          </DCArtboard>
+
+          <DCArtboard id="state-done" label="State · Done" width={360} height={640}>
+            <div className="phone-vote-host" style={{ height: '100%' }}>
+              <StaticVote state="done" votedFor={2} candidateCount={tw.candidateCount} showCountdown={tw.showCountdown} />
+            </div>
+          </DCArtboard>
+
+          <DCArtboard id="state-error" label="State · Error" width={360} height={640}>
+            <div className="phone-vote-host" style={{ height: '100%' }}>
+              <StaticVote state="error" candidateCount={tw.candidateCount} showCountdown={tw.showCountdown} />
+            </div>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="admin" title="데스크톱 — /admin" subtitle="방송 카메라가 모니터를 잡았을 때 멀리서도 식별 가능해야 함.">
+          <DCArtboard id="admin-live" label="Admin · Live (synced)" width={1280} height={760}>
+            <AdminPage showCountdown={tw.showCountdown} />
+          </DCArtboard>
+          <DCArtboard id="admin-connecting" label="Admin · Connecting" width={1280} height={760}>
+            <StaticAdmin connection="connecting" candidateCount={tw.candidateCount} showCountdown={tw.showCountdown} />
+          </DCArtboard>
+          <DCArtboard id="admin-reconnecting" label="Admin · Reconnecting" width={1280} height={760}>
+            <StaticAdmin connection="reconnecting" candidateCount={tw.candidateCount} showCountdown={tw.showCountdown} />
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks" defaultPosition={{ right: 20, bottom: 20 }}>
+        <TweakSection title="Round">
+          <TweakSlider label="참가자 수" value={tw.candidateCount} min={3} max={8} step={1} onChange={(v)=>setTweak('candidateCount', v)} />
+          <TweakToggle label="카운트다운 표시" value={tw.showCountdown} onChange={(v)=>setTweak('showCountdown', v)} />
+          <TweakButton label="라운드 리셋" onClick={resetTally} />
+          <TweakButton label="투표 폭주 시뮬레이션" onClick={burst} />
+        </TweakSection>
+        <TweakSection title="Vote screen state">
+          <TweakSelect
+            label="State"
+            value={tw.voteState}
+            options={[
+              { value: 'loading', label: 'Loading' },
+              { value: 'ready', label: 'Ready' },
+              { value: 'submitting', label: 'Submitting' },
+              { value: 'done', label: 'Done' },
+              { value: 'error', label: 'Error' },
+            ]}
+            onChange={(v)=>setTweak('voteState', v)}
+          />
+        </TweakSection>
+        <TweakSection title="Connection (admin)">
+          <TweakRadio
+            label="Status"
+            value={tw.connection}
+            options={[
+              { value: 'live', label: 'LIVE' },
+              { value: 'connecting', label: '연결 중' },
+              { value: 'reconnecting', label: '재연결' },
+              { value: 'offline', label: '오프라인' },
+            ]}
+            onChange={(v)=>setTweak('connection', v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </>
+  );
+}
+
+// Lightweight static-state previews for the side cards (so each state is always visible)
+function StaticVote({ state, pendingIndex, votedFor, candidateCount, showCountdown }) {
+  return (
+    <div className="vote-screen mt-root">
+      <div className="vote-header">
+        <span className="vote-eyebrow"><span className="live-dot" />MT VOTE · LIVE</span>
+        <h1>오늘 무대,<br/>당신의 선택은?</h1>
+        <div className="vote-subtitle">한 라운드에 한 번, 마음을 담아 투표해 주세요.</div>
+        <div className="meta-row">
+          <span className="round-tag"><span className="round-dot" /> Round · round_001</span>
+          {showCountdown && (
+            <span className="countdown">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="13" r="8" stroke="currentColor" strokeWidth="2"/>
+                <path d="M12 9v4l2.5 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <path d="M9 3h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+              1:23
+            </span>
+          )}
+        </div>
+      </div>
+
+      {state === 'loading' && (
+        <div className="sk-list">
+          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="sk-row" />)}
+        </div>
+      )}
+
+      {(state === 'submitting') && (
+        <div className="cand-list">
+          {Array.from({ length: candidateCount }).map((_, i) => {
+            const st = pendingIndex === i ? 'selected' : 'idle';
+            const disabled = pendingIndex != null && pendingIndex !== i;
+            return (
+              <button key={i} className="cand-btn" data-state={st} disabled={disabled} type="button">
+                <span className="name">
+                  <span className="num mt-tabular">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="label-stack">
+                    <span className="nm">{candName(i)}</span>
+                    <span className="sub">No. {i + 1}</span>
+                  </span>
+                </span>
+                <span className="slot">
+                  {st === 'selected' && <span className="spinner" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {state === 'done' && (
+        <>
+          <div className="cand-list" style={{ opacity: 0.55, pointerEvents: 'none' }}>
+            {Array.from({ length: candidateCount }).map((_, i) => (
+              <button key={i} className="cand-btn" data-state={votedFor === i ? 'submitted' : 'idle'} disabled type="button">
+                <span className="name">
+                  <span className="num mt-tabular">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="label-stack">
+                    <span className="nm">{candName(i)}</span>
+                    <span className="sub">No. {i + 1}</span>
+                  </span>
+                </span>
+                <span className="slot">
+                  {votedFor === i && (
+                    <span className="check">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                        <path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="done-card">
+            <div className="badge">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+                <path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <h2>투표가 접수되었습니다</h2>
+            <p>다음 라운드를 기다려 주세요.<br/>결과는 무대에서 공개됩니다.</p>
+            <span className="your-pick">
+              <span className="yp-num mt-tabular">{String(votedFor + 1).padStart(2, '0')}</span>
+              내 선택 · <b>{candName(votedFor)}</b>
+            </span>
+          </div>
+        </>
+      )}
+
+      {state === 'error' && (
+        <div className="err-card">
+          <div className="badge">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              <path d="M12 8v5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+              <circle cx="12" cy="16.5" r="1.3" fill="currentColor"/>
+              <path d="M10.3 3.7L2.4 17.5A2 2 0 004.1 20.5h15.8a2 2 0 001.7-3l-7.9-13.8a2 2 0 00-3.4 0z" stroke="currentColor" strokeWidth="2"/>
+            </svg>
+          </div>
+          <h2>일시적인 오류</h2>
+          <p>잠시 후 다시 시도해 주세요.</p>
+          <button className="retry-btn" type="button">다시 시도</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Static admin preview — no live ticking, fixed numbers
+function StaticAdmin({ connection, candidateCount, showCountdown }) {
+  // generate stable seed values
+  const counts = React.useMemo(() => {
+    const arr = [];
+    const seedScores = [632, 481, 412, 327, 289, 215, 168, 132];
+    for (let i = 0; i < candidateCount; i++) arr.push(seedScores[i] || 100);
+    return arr;
+  }, [candidateCount]);
+  const total = counts.reduce((a,b)=>a+b,0);
+  const niceMax = Math.max(50, Math.ceil(Math.max(...counts) / 50) * 50 * 1.15);
+  const tickValues = Array.from({ length: 6 }, (_, i) => Math.round(niceMax * i / 5));
+  const ranks = counts.map((c, i) => i).sort((a, b) => counts[b] - counts[a]);
+  const rankOf = {};
+  ranks.forEach((idx, r) => { rankOf[idx] = r + 1; });
+
+  return (
+    <div className="admin-root">
+      <div className="admin-topbar">
+        <div className="brand-row">
+          <div className="admin-mark">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M4 18V8M9 18V4M14 18V11M19 18V6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
+            </svg>
+          </div>
+          <div className="titles">
+            <span className="ks">MT VOTE · CONTROL ROOM</span>
+            <h1>실시간 집계 대시보드</h1>
+          </div>
+        </div>
+        <div className="right">
+          <span className="admin-clock mt-tabular">21:14:08</span>
+          <StatusPill kind={connection} />
+        </div>
+      </div>
+      <div className="stat-strip">
+        <div className="stat-card">
+          <div className="k">Round</div>
+          <div className="v">round_001</div>
+          <div className="sub">참가자 {candidateCount}명</div>
+        </div>
+        <div className="stat-card">
+          <div className="k">총 투표 수</div>
+          <div className="v mt-tabular">{total.toLocaleString()}</div>
+          <div className="sub">실시간 누적</div>
+        </div>
+        <div className="stat-card lead">
+          <div className="k">선두</div>
+          <div className="v" style={{ color: CHART_HEX[ranks[0] % 8] }}>{candName(ranks[0])}</div>
+          <div className="sub mt-tabular">{counts[ranks[0]].toLocaleString()} 표 · {((counts[ranks[0]]/total)*100).toFixed(1)}%</div>
+        </div>
+        {showCountdown && (
+          <div className="stat-card">
+            <div className="k">남은 시간</div>
+            <div className="v mt-tabular">1:23</div>
+            <div className="sub">라운드 마감까지</div>
+          </div>
+        )}
+      </div>
+      <div className="admin-chart-wrap">
+        <div className="admin-chart-head">
+          <h2>실시간 득표 그래프</h2>
+        </div>
+        <div className="admin-chart">
+          <div className="chart-y">
+            {tickValues.map((v, i) => <div key={i}>{v.toLocaleString()}</div>)}
+          </div>
+          <div className="chart-canvas">
+            <div className="chart-grid">
+              {tickValues.slice(1).map((_, i) => <div key={i} />)}
+            </div>
+            <div className="chart-bars">
+              {counts.map((c, i) => {
+                const pct = (c / niceMax) * 100;
+                const isLeader = rankOf[i] === 1;
+                const sharePct = total > 0 ? (c / total) * 100 : 0;
+                const hex = CHART_HEX[i % 8];
+                return (
+                  <div key={i} className="chart-bar-col">
+                    <div className={`chart-bar ${isLeader ? 'leader' : ''}`} style={{
+                      height: `${pct}%`,
+                      background: isLeader
+                        ? `linear-gradient(180deg, ${hex} 0%, ${hex}d0 65%, ${hex}90 100%)`
+                        : `linear-gradient(180deg, ${hex}d0 0%, ${hex}90 100%)`,
+                      '--leader-glow': `${hex}55`,
+                    }}>
+                      <span className="bar-pct">{sharePct.toFixed(1)}%</span>
+                      <span className="bar-val mt-tabular">{c.toLocaleString()}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div />
+          <div className="chart-x">
+            {counts.map((_, i) => (
+              <div key={i} className={rankOf[i] === 1 ? 'is-leader' : ''}>
+                {rankOf[i] === 1 && <span className="leader-pip" />}
+                {candName(i)}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="cards-row">
+        {counts.map((c, i) => {
+          const hex = CHART_HEX[i % 8];
+          const isLead = rankOf[i] === 1;
+          return (
+            <div key={i} className={`score-card ${isLead ? 'leader' : ''}`}
+              style={{ '--card-glow': `${hex}22`, '--card-border': `${hex}55`, '--fill-glow': `${hex}55` }}>
+              <div className="stripe" style={{ background: hex }} />
+              <div className="name-row">
+                <span className="name">
+                  <span className="num-chip mt-tabular" style={isLead ? { background: `${hex}33`, color: hex } : {}}>
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  {candName(i)}
+                </span>
+                <span className="rank" data-rank={rankOf[i]}>{rankOf[i]}위</span>
+              </div>
+              <div className="score mt-tabular" style={{ color: isLead ? hex : 'var(--text)' }}>
+                {c.toLocaleString()}
+              </div>
+              <div className="delta"><span style={{ opacity: 0.4 }}>—</span></div>
+              <div className="pct-bar">
+                <div className="fill" style={{ width: `${(c/total)*100}%`, background: `linear-gradient(90deg, ${hex} 0%, ${hex}cc 100%)` }} />
+              </div>
+              <div className="pct-text">점유율 {((c/total)*100).toFixed(1)}%</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
